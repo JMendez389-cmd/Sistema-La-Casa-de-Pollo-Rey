@@ -77,7 +77,7 @@ PLANTILLA_PRINCIPAL = {
 
 # Contraseña maestra: cámbiala aquí en el código si alguna vez deseas modificarla
 CLAVE_PRINCIPAL = "81754"
-# Clave para entrar al Modo Editor desde la nube o enlace compartido
+# Clave inicial para entrar al Modo Editor desde la nube o enlace compartido
 CLAVE_EDITOR = "81754"
 
 SECCIONES_CONTRASENA = [
@@ -145,7 +145,6 @@ def leer_datos_nube():
     valores = hoja.get_all_values()
     if not valores:
         return None
-    # Guardamos el JSON repartido en celdas de la columna A (de 40,000 chars máx por celda)
     fragmentos = [fila[0] for fila in valores if fila and fila[0]]
     texto_json = "".join(fragmentos).strip()
     if not texto_json:
@@ -199,6 +198,11 @@ def crear_respaldo_json():
             json.dump(cargar_datos(), f, indent=4, ensure_ascii=False)
 
     return nombre_archivo, ruta_destino
+
+
+def obtener_clave_editor(datos):
+    val = str(datos.get("clave_editor") or "").strip()
+    return val if val else CLAVE_EDITOR
 
 
 def obtener_clave_seccion(datos, seccion_key):
@@ -341,6 +345,9 @@ def normalizar_estructura_datos(datos):
         "modo_etiqueta": "Desactivado (no borrar automáticamente)",
         "horas_limite": 0.0,
     })
+    if not str(datos.get("clave_editor") or "").strip():
+        datos["clave_editor"] = CLAVE_EDITOR
+
     datos.setdefault("contrasenas_secciones", {})
     for k_sec, _ in SECCIONES_CONTRASENA:
         if not str(datos["contrasenas_secciones"].get(k_sec, "")).strip():
@@ -420,6 +427,7 @@ def cargar_datos():
             "modo_etiqueta": "Desactivado (no borrar automáticamente)",
             "horas_limite": 0.0,
         },
+        "clave_editor": CLAVE_EDITOR,
         "contrasenas_secciones": {k: CLAVE_PRINCIPAL for k, _ in SECCIONES_CONTRASENA},
         "categorias": list(CATEGORIAS_INICIALES),
         "preferencia_tema": "oscuro",
@@ -1299,7 +1307,6 @@ def construir_notificaciones_urgentes(productos, descartadas=None):
 # INICIALIZACIÓN DE SESIÓN, ROLES (LECTOR / EDITOR) Y DATOS
 # ==============================================================================
 if "rol_acceso" not in st.session_state:
-    # Por defecto entra como Lector (solo vista) para proteger la edición en enlaces compartidos
     st.session_state["rol_acceso"] = "lector"
 if "mostrar_login_editor" not in st.session_state:
     st.session_state["mostrar_login_editor"] = False
@@ -1313,6 +1320,7 @@ if "claves_desbloqueadas" not in st.session_state:
     st.session_state["claves_desbloqueadas"] = False
 
 datos = cargar_datos()
+clave_editor_activa = obtener_clave_editor(datos)
 es_editor = st.session_state.get("rol_acceso") == "editor"
 
 purgados_inicio = purgar_papelera_vencida(datos) if es_editor else 0
@@ -1425,7 +1433,7 @@ if es_editor:
 else:
     col_lec_info, col_act_lec, col_entrar_ed, col_tema_lec = st.columns([4.5, 1.6, 1.9, 1.3], gap="small")
     with col_lec_info:
-        estado_nube_txt = "Nube activa" if nube_configurada() else "Modo local (sin nube configurada aún)"
+        estado_nube_txt = "Nube activa" if nube_configurada() else "Modo local"
         st.caption(f"👁️ **Modo Lector (Solo vista)** · {estado_nube_txt}")
     with col_act_lec:
         if st.button("🔄 Actualizar datos", key="btn_actualizar_nube", use_container_width=True):
@@ -1447,7 +1455,7 @@ else:
             confirmar_ed = c_ed1.form_submit_button("Entrar como Editor")
             cancelar_ed = c_ed2.form_submit_button("Cancelar")
             if confirmar_ed:
-                if clave_ed_in == CLAVE_EDITOR:
+                if clave_ed_in == clave_editor_activa:
                     st.session_state["rol_acceso"] = "editor"
                     st.session_state["mostrar_login_editor"] = False
                     st.rerun()
@@ -1507,7 +1515,19 @@ st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
 # ==============================================================================
 if not es_editor:
     st.subheader("📋 Estado actual de los productos")
-    st.caption("Vista de solo lectura. Si se acaban de ingresar o modificar productos, haz clic en **Actualizar datos** o recarga la página.")
+    st.caption("Vista de solo lectura. Si se acaban de ingresar o modificar productos, haz clic en **Actualizar datos**.")
+
+    total_prods_lec = len(datos["productos"])
+    stock_bajo_lec = sum(1 for p in datos["productos"] if clasificar_stock(float(p.get("cantidad", 0.0))) in ("Poco producto", "Por surtir pronto"))
+    urgentes_lec = sum(1 for a in alertas_activas if a.get("_orden") == 1)
+
+    rm1, rm2, rm3 = st.columns(3)
+    with rm1:
+        tarjeta_metrica("Productos registrados", str(total_prods_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with rm2:
+        tarjeta_metrica("Por reponer / stock bajo", str(stock_bajo_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with rm3:
+        tarjeta_metrica("Alertas urgentes", str(urgentes_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
 
     if datos["productos"]:
         buscar_lec = st.text_input(
@@ -1568,6 +1588,17 @@ if not es_editor:
     st.subheader(f"🔔 Alertas y notificaciones ({num_alertas})")
     if alertas_activas:
         df_n_lec = pd.DataFrame(alertas_activas).reset_index(drop=True)
+        tipos_lec = sorted(df_n_lec["Tipo de alerta"].unique().tolist())
+        tipos_sel_lec = st.multiselect(
+            "Filtrar alertas",
+            options=tipos_lec,
+            default=[],
+            placeholder="Todos los tipos de alerta",
+            key="filtro_alertas_lector",
+        )
+        if tipos_sel_lec:
+            df_n_lec = df_n_lec[df_n_lec["Tipo de alerta"].isin(tipos_sel_lec)].reset_index(drop=True)
+
         est_n_lec = df_n_lec["_estilo"].tolist()
         df_n_lec_vis = df_n_lec[["Tipo de alerta", "Producto", "Categoría", "Cantidad actual", "Caducidad", "Días Rest.", "Detalle"]]
         renderizar_tabla_moderna(
@@ -1898,6 +1929,14 @@ elif vista_lateral == etiqueta_claves_menu:
                     st.error("Contraseña principal incorrecta.")
     else:
         with st.form("form_editar_claves_secciones"):
+            st.markdown("**Acceso al Modo Editor (pantalla inicial / enlace compartido)**")
+            nueva_clave_editor = st.text_input(
+                "Contraseña para entrar a Modo Editor *",
+                value=clave_editor_activa,
+                key="edit_clave_modo_editor",
+            )
+            st.divider()
+
             nuevas_claves = {}
             for k_sec, nombre_sec in SECCIONES_CONTRASENA:
                 valor_actual_sec = obtener_clave_seccion(datos, k_sec)
@@ -1911,9 +1950,12 @@ elif vista_lateral == etiqueta_claves_menu:
             guardar_claves = st.form_submit_button("Guardar contraseñas")
             if guardar_claves:
                 vacias = [nombre_sec for k_sec, nombre_sec in SECCIONES_CONTRASENA if not str(nuevas_claves.get(k_sec, "")).strip()]
-                if vacias:
+                if not str(nueva_clave_editor or "").strip():
+                    st.warning("La contraseña para entrar a Modo Editor no puede quedar vacía.")
+                elif vacias:
                     st.warning(f"Ninguna contraseña puede quedar vacía: {', '.join(vacias)}.")
                 else:
+                    datos["clave_editor"] = str(nueva_clave_editor).strip()
                     datos["contrasenas_secciones"] = {
                         k_sec: str(nuevas_claves[k_sec]).strip()
                         for k_sec, _ in SECCIONES_CONTRASENA
