@@ -1394,15 +1394,12 @@ if not es_editor or not st.session_state["barra_lateral_abierta"] or vista_later
 
 # Barra superior: cambia según si está en Modo Editor o Modo Lector
 if es_editor:
-    col_menu_izq, col_act_top, col_rol_top, col_badge_top, col_resp_top, col_tema_top = st.columns([1.4, 1.3, 1.5, 2.0, 1.4, 1.3], gap="small")
+    col_menu_izq, col_rol_top, col_badge_top, col_resp_top, col_tema_top = st.columns([1.6, 1.6, 2.2, 1.5, 1.4], gap="small")
     with col_menu_izq:
         etiqueta_menu_izq = "✕ Cerrar barra lateral" if st.session_state["barra_lateral_abierta"] else "☰ Abrir barra lateral"
         if st.button(etiqueta_menu_izq, key="btn_toggle_sidebar", use_container_width=True):
             st.session_state["barra_lateral_abierta"] = not st.session_state["barra_lateral_abierta"]
             st.session_state["claves_desbloqueadas"] = False
-            st.rerun()
-    with col_act_top:
-        if st.button("🔄 Actualizar", key="btn_actualizar_nube", use_container_width=True):
             st.rerun()
     with col_rol_top:
         if st.button("👁️ Pasar a Lector", key="btn_modo_rol", use_container_width=True):
@@ -1511,7 +1508,7 @@ st.markdown(
 st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# PANTALLA EXCLUSIVA DE MODO LECTOR (FILTROS SEPARADOS POR ESTADO / STOCK / CAT)
+# PANTALLA EXCLUSIVA DE MODO LECTOR (PRODUCTOS, VENTAS/BALANCE, MERMA Y ALERTAS)
 # ==============================================================================
 if not es_editor:
     st.subheader("📋 Estado actual de los productos")
@@ -1608,6 +1605,136 @@ if not es_editor:
             <div class="cuadro-vacio">
                 <p class="cuadro-vacio-titulo">Sin productos registrados por el momento</p>
                 <p class="cuadro-vacio-desc">Cuando el editor registre productos y actualice los datos, aparecerán aquí.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+    st.subheader("📈 Control de ventas, compras y balance")
+    periodo_lec = st.selectbox(
+        "Periodo",
+        ["Todo", "Hoy", "Últimos 7 días", "Últimos 30 días"],
+        key="filtro_periodo_lector",
+    )
+    hoy_lec = date.today()
+
+    if datos["ventas"]:
+        df_v_lec = pd.DataFrame(datos["ventas"]).copy()
+        df_v_lec["fecha_dt"] = pd.to_datetime(df_v_lec["fecha"], errors="coerce")
+        df_v_lec = df_v_lec.dropna(subset=["fecha_dt"])
+        df_v_lec["total"] = df_v_lec["total"].astype(float)
+        if periodo_lec == "Hoy":
+            df_v_lec = df_v_lec[df_v_lec["fecha_dt"].dt.date == hoy_lec]
+        elif periodo_lec == "Últimos 7 días":
+            df_v_lec = df_v_lec[df_v_lec["fecha_dt"].dt.date >= (hoy_lec - timedelta(days=6))]
+        elif periodo_lec == "Últimos 30 días":
+            df_v_lec = df_v_lec[df_v_lec["fecha_dt"].dt.date >= (hoy_lec - timedelta(days=29))]
+        total_v_lec = float(df_v_lec["total"].sum()) if not df_v_lec.empty else 0.0
+    else:
+        df_v_lec = pd.DataFrame()
+        total_v_lec = 0.0
+
+    if datos["compras"]:
+        df_c_lec = pd.DataFrame(datos["compras"]).copy()
+        df_c_lec["fecha_dt"] = pd.to_datetime(df_c_lec["fecha"], errors="coerce")
+        df_c_lec = df_c_lec.dropna(subset=["fecha_dt"])
+        df_c_lec["total_gastado"] = df_c_lec["total_gastado"].astype(float)
+        if periodo_lec == "Hoy":
+            df_c_lec = df_c_lec[df_c_lec["fecha_dt"].dt.date == hoy_lec]
+        elif periodo_lec == "Últimos 7 días":
+            df_c_lec = df_c_lec[df_c_lec["fecha_dt"].dt.date >= (hoy_lec - timedelta(days=6))]
+        elif periodo_lec == "Últimos 30 días":
+            df_c_lec = df_c_lec[df_c_lec["fecha_dt"].dt.date >= (hoy_lec - timedelta(days=29))]
+        total_c_lec = float(df_c_lec["total_gastado"].sum()) if not df_c_lec.empty else 0.0
+    else:
+        total_c_lec = 0.0
+
+    perdida_lec = sum(
+        float(m.get("perdida_estimada", 0.0))
+        for m in datos["mermas"]
+        if m.get("tipo_registro") in ("Merma / Vencido", "Nuevo ingreso en mal estado")
+    )
+    cobrado_liq_lec = sum(
+        float(m.get("monto_recuperado", 0.0))
+        for m in datos["mermas"]
+        if m.get("tipo_registro") == "Buen estado (otro precio / baja)"
+    )
+    dif_liq_lec = sum(
+        float(m.get("perdida_estimada", 0.0))
+        for m in datos["mermas"]
+        if m.get("tipo_registro") == "Buen estado (otro precio / baja)"
+    )
+    balance_lec = round(total_v_lec - total_c_lec - perdida_lec, 2)
+
+    vm1, vm2, vm3 = st.columns(3)
+    with vm1:
+        tarjeta_metrica("Total en ventas", fmt_quetzales(total_v_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with vm2:
+        tarjeta_metrica("Compras / reposición", fmt_quetzales(total_c_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with vm3:
+        tarjeta_metrica("Balance (Ventas - Compras - Merma)", fmt_quetzales(balance_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+
+    if not df_v_lec.empty:
+        filas_v_lec = [
+            {
+                "Fecha": r["fecha"],
+                "Hora": r.get("hora", ""),
+                "Producto": r["producto"],
+                "Cantidad": formatear_cantidad(r["cantidad"], r.get("unidad", "Unidad")),
+                "Total": fmt_quetzales(r.get("total", 0.0)),
+            }
+            for _, r in df_v_lec.sort_values("fecha_dt", ascending=False).iterrows()
+        ]
+        renderizar_tabla_moderna(pd.DataFrame(filas_v_lec), modo_oscuro=modo_oscuro, enumerar=True)
+    else:
+        st.markdown(
+            """
+            <div class="cuadro-vacio">
+                <p class="cuadro-vacio-titulo">Sin ventas registradas en este periodo</p>
+                <p class="cuadro-vacio-desc">Cuando se registren ventas, aparecerán aquí.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+    st.subheader("📉 Merma, desperdicio y liquidación")
+    lm1, lm2, lm3 = st.columns(3)
+    with lm1:
+        tarjeta_metrica("Desperdicio / pérdida (vencidos / mal estado)", fmt_quetzales(perdida_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with lm2:
+        tarjeta_metrica("Cobrado en rebaja / otro precio", fmt_quetzales(cobrado_liq_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+    with lm3:
+        tarjeta_metrica("Diferencia en rebaja / baja", fmt_quetzales(dif_liq_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
+
+    if datos["mermas"]:
+        filas_m_lec = []
+        tipos_m_lec = []
+        for m in reversed(datos["mermas"]):
+            t_reg = m.get("tipo_registro", "Merma / Vencido")
+            tipos_m_lec.append(t_reg)
+            filas_m_lec.append({
+                "Fecha": m.get("fecha", ""),
+                "Tipo": t_reg,
+                "Producto": m.get("producto", ""),
+                "Cantidad": formatear_cantidad(m.get("cantidad", 0), m.get("unidad", "Unidad")),
+                "Cobrado": fmt_quetzales(m.get("monto_recuperado", 0.0)),
+                "Pérdida / Dif.": fmt_quetzales(m.get("perdida_estimada", 0.0)),
+            })
+        df_m_lec_vis = pd.DataFrame(filas_m_lec)
+        renderizar_tabla_moderna(
+            df_m_lec_vis,
+            modo_oscuro=modo_oscuro,
+            estilos_celdas=estilizar_mermas(df_m_lec_vis, tipos_m_lec, modo_oscuro=modo_oscuro),
+            enumerar=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="cuadro-vacio">
+                <p class="cuadro-vacio-titulo">Sin registros de merma o liquidación</p>
+                <p class="cuadro-vacio-desc">Aquí se mostrará lo desperdiciado y lo vendido en rebaja o liquidación.</p>
             </div>
             """,
             unsafe_allow_html=True,
