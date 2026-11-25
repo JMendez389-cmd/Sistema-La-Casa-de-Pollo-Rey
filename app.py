@@ -1511,7 +1511,7 @@ st.markdown(
 st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# PANTALLA EXCLUSIVA DE MODO LECTOR (SOLO VISTA DEL ESTADO DE PRODUCTOS)
+# PANTALLA EXCLUSIVA DE MODO LECTOR (FILTROS SEPARADOS POR ESTADO / STOCK / CAT)
 # ==============================================================================
 if not es_editor:
     st.subheader("📋 Estado actual de los productos")
@@ -1530,12 +1530,6 @@ if not es_editor:
         tarjeta_metrica("Alertas urgentes", str(urgentes_lec), modo_oscuro=modo_oscuro, paleta=paleta_activa)
 
     if datos["productos"]:
-        buscar_lec = st.text_input(
-            "🔍 Buscar producto o categoría",
-            placeholder="Escribe para filtrar...",
-            key="buscador_lector_prod",
-        ).strip().lower()
-
         filas_lec = []
         for p in datos["productos"]:
             normalizar_lotes_producto(p)
@@ -1548,7 +1542,7 @@ if not es_editor:
                 "Producto": p["nombre"],
                 "Categoría": p.get("categoria", "General"),
                 "Disponible": formatear_cantidad(cant_num, unidad_p),
-                "Stock": nivel_stk,
+                "Nivel Stock": nivel_stk,
                 "Caducidad": p.get("fecha_vencimiento", "") or "Sin fecha",
                 "Días Rest.": dias_rest if dias_rest is not None else "-",
                 "Estado": situacion,
@@ -1557,22 +1551,57 @@ if not es_editor:
             })
 
         df_lec = pd.DataFrame(filas_lec)
-        if buscar_lec:
-            df_lec = df_lec[
-                df_lec["Producto"].str.lower().str.contains(buscar_lec, na=False)
-                | df_lec["Categoría"].str.lower().str.contains(buscar_lec, na=False)
-            ]
-        df_lec = df_lec.reset_index(drop=True)
-        sits_lec = df_lec["_situacion"].tolist()
-        stks_lec = df_lec["_nivel_stock"].tolist()
-        df_lec_vis = df_lec.drop(columns=["_situacion", "_nivel_stock"])
 
-        renderizar_tabla_moderna(
-            df_lec_vis,
-            modo_oscuro=modo_oscuro,
-            estilos_celdas=estilizar_celdas_estado(df_lec_vis, sits_lec, stks_lec, modo_oscuro=modo_oscuro),
-            enumerar=True,
+        lf1, lf2, lf3 = st.columns(3)
+        sit_lec_sel = lf1.multiselect(
+            "Filtrar por estado / caducidad",
+            options=["Buen estado", "Próximo a vencer", "Vencido", "Vencido / Mal estado", "Sin fecha"],
+            default=[],
+            placeholder="Todos los estados",
+            key="filtro_estado_lector",
         )
+        stk_lec_sel = lf2.multiselect(
+            "Filtrar por nivel de stock",
+            options=["Stock suficiente", "Por surtir pronto", "Poco producto"],
+            default=[],
+            placeholder="Todos los niveles de stock",
+            key="filtro_stock_lector",
+        )
+        cats_lec_lista = sorted(df_lec["Categoría"].unique().tolist())
+        cat_lec_sel = lf3.multiselect(
+            "Filtrar por categoría",
+            options=cats_lec_lista,
+            default=[],
+            placeholder="Todas las categorías",
+            key="filtro_cat_lector",
+        )
+
+        m_sit_lec = df_lec["_situacion"].isin(sit_lec_sel) if sit_lec_sel else pd.Series([True] * len(df_lec), index=df_lec.index)
+        m_stk_lec = df_lec["_nivel_stock"].isin(stk_lec_sel) if stk_lec_sel else pd.Series([True] * len(df_lec), index=df_lec.index)
+        m_cat_lec = df_lec["Categoría"].isin(cat_lec_sel) if cat_lec_sel else pd.Series([True] * len(df_lec), index=df_lec.index)
+
+        df_lec_fil = df_lec[m_sit_lec & m_stk_lec & m_cat_lec].reset_index(drop=True)
+        sits_lec = df_lec_fil["_situacion"].tolist()
+        stks_lec = df_lec_fil["_nivel_stock"].tolist()
+        df_lec_vis = df_lec_fil.drop(columns=["_situacion", "_nivel_stock"])
+
+        if not df_lec_vis.empty:
+            renderizar_tabla_moderna(
+                df_lec_vis,
+                modo_oscuro=modo_oscuro,
+                estilos_celdas=estilizar_celdas_estado(df_lec_vis, sits_lec, stks_lec, modo_oscuro=modo_oscuro),
+                enumerar=True,
+            )
+        else:
+            st.markdown(
+                """
+                <div class="cuadro-vacio">
+                    <p class="cuadro-vacio-titulo">No hay productos que coincidan con los filtros seleccionados</p>
+                    <p class="cuadro-vacio-desc">Quita o cambia alguno de los filtros de estado, stock o categoría para ver todos los productos.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
     else:
         st.markdown(
             """
@@ -1590,7 +1619,7 @@ if not es_editor:
         df_n_lec = pd.DataFrame(alertas_activas).reset_index(drop=True)
         tipos_lec = sorted(df_n_lec["Tipo de alerta"].unique().tolist())
         tipos_sel_lec = st.multiselect(
-            "Filtrar alertas",
+            "Filtrar por tipo de alerta",
             options=tipos_lec,
             default=[],
             placeholder="Todos los tipos de alerta",
@@ -1601,12 +1630,13 @@ if not es_editor:
 
         est_n_lec = df_n_lec["_estilo"].tolist()
         df_n_lec_vis = df_n_lec[["Tipo de alerta", "Producto", "Categoría", "Cantidad actual", "Caducidad", "Días Rest.", "Detalle"]]
-        renderizar_tabla_moderna(
-            df_n_lec_vis,
-            modo_oscuro=modo_oscuro,
-            estilos_celdas=estilizar_notificaciones(df_n_lec_vis, est_n_lec, modo_oscuro=modo_oscuro),
-            enumerar=True,
-        )
+        if not df_n_lec_vis.empty:
+            renderizar_tabla_moderna(
+                df_n_lec_vis,
+                modo_oscuro=modo_oscuro,
+                estilos_celdas=estilizar_notificaciones(df_n_lec_vis, est_n_lec, modo_oscuro=modo_oscuro),
+                enumerar=True,
+            )
     else:
         st.markdown(
             """
